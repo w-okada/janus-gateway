@@ -1657,7 +1657,7 @@ static MHD_Result janus_http_handler(void *cls, struct MHD_Connection *connectio
 				janus_refcount_increase(&ts->ref);
 				janus_refcount_increase(&session->ref);
 				g_atomic_int_set(&msg->timeout_flag, 1);
-				msg->timeout = janus_http_request_timeout_create(ts, session, 30);
+				msg->timeout = janus_http_request_timeout_create(ts, session, 10);
 				g_source_attach(msg->timeout, httpctx);
 				/* Mark this connection as the long poll for this session */
 				msg->max_events = max_events;
