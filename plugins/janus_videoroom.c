@@ -1687,6 +1687,9 @@ typedef struct janus_videoroom_publisher {
 	gboolean e2ee;		/* If media from this publisher is end-to-end encrypted */
 	volatile gint destroyed;
 	janus_refcount ref;
+	int position_x;
+	int position_y;
+	int position_z;
 } janus_videoroom_publisher;
 static guint32 janus_videoroom_rtp_forwarder_add_helper(janus_videoroom_publisher *p,
 	const gchar *host, int port, int rtcp_port, int pt, uint32_t ssrc,
@@ -4856,6 +4859,13 @@ static json_t *janus_videoroom_process_synchronous_request(janus_videoroom_sessi
 				json_object_set_new(pl, "subscribers", json_integer(g_slist_length(p->subscribers)));
 				janus_mutex_unlock_nodebug(&p->subscribers_mutex);
 			}
+
+			json_t *position = json_array();
+			json_array_append_new(position, json_integer(p->position_x));
+			json_array_append_new(position, json_integer(p->position_y));
+			json_array_append_new(position, json_integer(p->position_z));
+			json_object_set_new(pl, "position", position);
+
 			json_array_append_new(list, pl);
 		}
 		janus_mutex_unlock(&videoroom->mutex);
@@ -5670,6 +5680,44 @@ void janus_videoroom_incoming_data(janus_plugin_session *handle, janus_plugin_da
 		packet->binary ? "binary" : "text", len);
 	/* Save the message if we're recording */
 	janus_recorder_save_frame(participant->drc, buf, len);
+
+	printf("incoming:::: %s\n", buf);
+
+	// If message come from virtual space application, parse the message data.
+    json_t *data_root;
+    json_error_t error;
+	data_root = json_loads(buf, JSON_DISABLE_EOF_CHECK, &error);
+    if (data_root) {
+		const char *dataType = json_string_value(json_object_get(data_root, "dataType"));
+		if(!strcmp(dataType, "chatText")){
+			JANUS_LOG(LOG_INFO, "incoming: chatText:::\n");
+		}else if(!strcmp(dataType, "updateState")){
+			JANUS_LOG(LOG_INFO, "incoming: updateState:::\n");
+			json_t *newState = json_object_get(data_root, "data");
+
+			json_t *position = json_object_get(newState, "position");
+
+			json_t *position_x = json_array_get(position, 0);
+			int x = json_integer_value(position_x);
+			participant->position_x = x;
+
+			json_t *position_y = json_array_get(position, 1);
+			int y = json_integer_value(position_y);
+			participant->position_y = y;
+
+			json_t *position_z = json_array_get(position, 2);
+			int z = json_integer_value(position_z);
+			participant->position_z = z;
+			JANUS_LOG(LOG_INFO, "new position :[%d, %d, %d]\n", participant->position_x, participant->position_y, participant->position_z);
+		}else{
+			JANUS_LOG(LOG_INFO, "unknown data type:::%s\n", dataType);
+		}
+    }else{
+		JANUS_LOG(LOG_INFO,"This message is not from virtual space app.\n");
+		JANUS_LOG(LOG_INFO,"json error on line %d: %s\n", error.line, error.text);
+	}
+
+
 	/* Relay to all subscribers */
 	janus_videoroom_rtp_relay_packet pkt;
 	pkt.data = (struct rtp_header *)buf;
@@ -6289,6 +6337,11 @@ static void *janus_videoroom_handler(void *data) {
 				publisher->rtp_forwarders = g_hash_table_new_full(NULL, NULL, NULL, (GDestroyNotify)janus_videoroom_rtp_forwarder_destroy);
 				publisher->srtp_contexts = g_hash_table_new_full(g_str_hash, g_str_equal, NULL, (GDestroyNotify)janus_videoroom_srtp_context_free);
 				publisher->udp_sock = -1;
+
+				publisher->position_x = 10;
+				publisher->position_y = 10;
+				publisher->position_z = 10;
+
 				/* Finally, generate a private ID: this is only needed in case the participant
 				 * wants to allow the plugin to know which subscriptions belong to them */
 				publisher->pvt_id = 0;
