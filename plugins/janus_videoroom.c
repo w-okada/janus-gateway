@@ -1738,6 +1738,8 @@ typedef struct janus_videoroom_rtp_relay_packet {
 	janus_vp9_svc_info svc_info;
 	/* The following is only relevant for datachannels */
 	gboolean textdata;
+
+	char *label;
 } janus_videoroom_rtp_relay_packet;
 
 /* Start / stop recording */
@@ -5256,6 +5258,14 @@ void janus_videoroom_setup_media(janus_plugin_session *handle) {
 				json_object_set_new(pl, "simulcast", json_true());
 			if(participant->audio_level_extmap_id > 0)
 				json_object_set_new(pl, "talking", participant->talking ? json_true() : json_false());
+
+
+			json_t *position = json_array();
+			json_array_append_new(position, json_integer(participant->position_x));
+			json_array_append_new(position, json_integer(participant->position_y));
+			json_array_append_new(position, json_integer(participant->position_z));
+			json_object_set_new(pl, "position", position);
+
 			json_array_append_new(list, pl);
 			json_t *pub = json_object();
 			json_object_set_new(pub, "videoroom", json_string("event"));
@@ -5681,20 +5691,16 @@ void janus_videoroom_incoming_data(janus_plugin_session *handle, janus_plugin_da
 	/* Save the message if we're recording */
 	janus_recorder_save_frame(participant->drc, buf, len);
 
-	printf("incoming:::: %s\n", buf);
+	// printf("incoming:::: %s\n", buf);
+	// printf("incoming:::: %s\n", packet->label);
 
 	// If message come from virtual space application, parse the message data.
-    json_t *data_root;
-    json_error_t error;
-	data_root = json_loads(buf, JSON_DISABLE_EOF_CHECK, &error);
-    if (data_root) {
-		const char *dataType = json_string_value(json_object_get(data_root, "dataType"));
-		if(!strcmp(dataType, "chatText")){
-			JANUS_LOG(LOG_INFO, "incoming: chatText:::\n");
-		}else if(!strcmp(dataType, "updateState")){
-			JANUS_LOG(LOG_INFO, "incoming: updateState:::\n");
-			json_t *newState = json_object_get(data_root, "data");
-
+	if(!strcmp(packet->label, "updateState")){
+		// JANUS_LOG(LOG_INFO, "incoming: updateState:::\n");
+		json_t *newState;
+		json_error_t error;
+		newState = json_loads(buf, JSON_DISABLE_EOF_CHECK, &error);
+		if (newState) {
 			json_t *position = json_object_get(newState, "position");
 
 			json_t *position_x = json_array_get(position, 0);
@@ -5709,13 +5715,13 @@ void janus_videoroom_incoming_data(janus_plugin_session *handle, janus_plugin_da
 			int z = json_integer_value(position_z);
 			participant->position_z = z;
 			JANUS_LOG(LOG_INFO, "new position :[%d, %d, %d]\n", participant->position_x, participant->position_y, participant->position_z);
+			// json_decref(data_root);
 		}else{
-			JANUS_LOG(LOG_INFO, "unknown data type:::%s\n", dataType);
+			JANUS_LOG(LOG_INFO,"This message is not from virtual space app.\n");
+			JANUS_LOG(LOG_INFO,"json error on line %d: %s\n", error.line, error.text);
 		}
-    }else{
-		JANUS_LOG(LOG_INFO,"This message is not from virtual space app.\n");
-		JANUS_LOG(LOG_INFO,"json error on line %d: %s\n", error.line, error.text);
 	}
+
 
 
 	/* Relay to all subscribers */
@@ -5724,6 +5730,7 @@ void janus_videoroom_incoming_data(janus_plugin_session *handle, janus_plugin_da
 	pkt.length = len;
 	pkt.is_rtp = FALSE;
 	pkt.textdata = !packet->binary;
+	pkt.label = packet->label;
 	janus_mutex_lock_nodebug(&participant->subscribers_mutex);
 	g_slist_foreach(participant->subscribers, janus_videoroom_relay_data_packet, &pkt);
 	janus_mutex_unlock_nodebug(&participant->subscribers_mutex);
@@ -6498,6 +6505,13 @@ static void *janus_videoroom_handler(void *data) {
 						json_object_set_new(pl, "simulcast", json_true());
 					if(p->audio_level_extmap_id > 0)
 						json_object_set_new(pl, "talking", p->talking ? json_true() : json_false());
+
+					json_t *position = json_array();
+					json_array_append_new(position, json_integer(p->position_x));
+					json_array_append_new(position, json_integer(p->position_y));
+					json_array_append_new(position, json_integer(p->position_z));
+					json_object_set_new(pl, "position", position);
+
 					json_array_append_new(list, pl);
 				}
 				event = json_object();
@@ -8328,7 +8342,7 @@ static void janus_videoroom_relay_data_packet(gpointer data, gpointer user_data)
 		JANUS_LOG(LOG_VERB, "Forwarding %s DataChannel message (%d bytes) to viewer\n",
 			packet->textdata ? "text" : "binary", packet->length);
 		janus_plugin_data data = {
-			.label = NULL,
+			.label = packet->label,
 			.protocol = NULL,
 			.binary = !packet->textdata,
 			.buffer = (char *)packet->data,
