@@ -3627,6 +3627,13 @@ static void janus_videoroom_notify_about_publisher(janus_videoroom_publisher *p,
 		temp = temp->next;
 	}
 	json_object_set_new(pl, "streams", media);
+
+	json_t *position = json_array();
+	json_array_append_new(position, json_integer(p->position_x));
+	json_array_append_new(position, json_integer(p->position_y));
+	json_array_append_new(position, json_integer(p->position_z));
+	json_object_set_new(pl, "position", position);
+	
 	json_array_append_new(list, pl);
 	json_t *pub = json_object();
 	json_object_set_new(pub, "videoroom", json_string("event"));
@@ -6894,6 +6901,39 @@ void janus_videoroom_incoming_data(janus_plugin_session *handle, janus_plugin_da
 		packet->binary ? "binary" : "text", len);
 	/* Save the message if we're recording */
 	janus_recorder_save_frame(ps->rc, buf, len);
+
+
+	// If message come from virtual space application, parse the message data.
+	printf("incoming:::: %s\n", buf);
+	if(!strcmp(packet->label, "updateState")){
+		// JANUS_LOG(LOG_INFO, "incoming: updateState:::\n");
+		json_t *newState;
+		json_error_t error;
+		newState = json_loads(buf, JSON_DISABLE_EOF_CHECK, &error);
+		if (newState) {
+
+			json_t *position = json_object_get(newState, "position");
+
+			json_t *position_x = json_array_get(position, 0);
+			int x = json_integer_value(position_x);
+			participant->position_x = x;
+
+			json_t *position_y = json_array_get(position, 1);
+			int y = json_integer_value(position_y);
+			participant->position_y = y;
+
+			json_t *position_z = json_array_get(position, 2);
+			int z = json_integer_value(position_z);
+			participant->position_z = z;
+			JANUS_LOG(LOG_INFO, "new position :[%d, %d, %d]\n", participant->position_x, participant->position_y, participant->position_z);
+		}else{
+			JANUS_LOG(LOG_INFO,"This message is not from virtual space app.\n");
+			JANUS_LOG(LOG_INFO,"json error on line %d: %s\n", error.line, error.text);
+		}
+	}
+
+
+
 	/* Relay to all subscribers */
 	janus_videoroom_rtp_relay_packet pkt;
 	pkt.source = ps;
@@ -6901,6 +6941,7 @@ void janus_videoroom_incoming_data(janus_plugin_session *handle, janus_plugin_da
 	pkt.length = len;
 	pkt.is_rtp = FALSE;
 	pkt.textdata = !packet->binary;
+	pkt.label = packet->label;
 	janus_mutex_lock_nodebug(&ps->subscribers_mutex);
 	g_slist_foreach(ps->subscribers, janus_videoroom_relay_data_packet, &pkt);
 	janus_mutex_unlock_nodebug(&ps->subscribers_mutex);
@@ -7683,6 +7724,13 @@ static void *janus_videoroom_handler(void *data) {
 					json_object_set_new(pl, "streams", media);
 					if(talking_found)
 						json_object_set_new(pl, "talking", talking ? json_true() : json_false());
+
+					json_t *position = json_array();
+					json_array_append_new(position, json_integer(p->position_x));
+					json_array_append_new(position, json_integer(p->position_y));
+					json_array_append_new(position, json_integer(p->position_z));
+					json_object_set_new(pl, "position", position);
+					
 					json_array_append_new(list, pl);
 				}
 				event = json_object();
@@ -10528,6 +10576,7 @@ static void janus_videoroom_relay_data_packet(gpointer data, gpointer user_data)
 			packet->textdata ? "text" : "binary", packet->length);
 		janus_plugin_data data = {
 			.label = ps->publisher->user_id_str,
+			// .label = packet->label,
 			.protocol = NULL,
 			.binary = !packet->textdata,
 			.buffer = (char *)packet->data,
