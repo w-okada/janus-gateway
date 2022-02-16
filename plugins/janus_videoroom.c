@@ -2490,7 +2490,7 @@ static janus_videoroom_rtp_forwarder *janus_videoroom_rtp_forwarder_add_helper(j
 	forward->source = ps;
 	forward->rtcp_fd = fd;
 	forward->local_rtcp_port = local_rtcp_port;
-	forward->remote_rtcp_port = rtcp_port;
+	forward->remote_rtcp_port = rtcp_port > 0 ? rtcp_port : 0;
 	/* First of all, let's check if we need to setup an SRTP forwarder */
 	if(!is_data && srtp_suite > 0 && srtp_crypto != NULL) {
 		/* First of all, let's check if there's already an RTP forwarder with
@@ -2931,6 +2931,15 @@ static json_t *janus_videoroom_subscriber_streams_summary(janus_videoroom_subscr
 				json_object_set_new(m, "feed_mid", json_string(ps->mid));
 			if(ps->description)
 				json_object_set_new(m, "feed_description", json_string(ps->description));
+			if(stream->type == JANUS_VIDEOROOM_MEDIA_AUDIO) {
+				json_object_set_new(m, "codec", json_string(janus_audiocodec_name(stream->acodec)));
+			} else if(stream->type == JANUS_VIDEOROOM_MEDIA_VIDEO) {
+				json_object_set_new(m, "codec", json_string(janus_videocodec_name(stream->vcodec)));
+				if(stream->vcodec == JANUS_VIDEOCODEC_H264 && stream->h264_profile != NULL)
+					json_object_set_new(m, "h264-profile", json_string(stream->h264_profile));
+				if(stream->vcodec == JANUS_VIDEOCODEC_VP9 && stream->vp9_profile != NULL)
+					json_object_set_new(m, "vp9-profile", json_string(stream->vp9_profile));
+			}
 			if(ps->simulcast) {
 				json_t *simulcast = json_object();
 				json_object_set_new(simulcast, "substream", json_integer(stream->sim_context.substream));
@@ -3859,10 +3868,15 @@ json_t *janus_videoroom_query_session(janus_plugin_session *handle) {
 					json_object_set_new(m, "mid", json_string(ps->mid));
 					if(ps->description)
 						json_object_set_new(m, "description", json_string(ps->description));
-					if(ps->type == JANUS_VIDEOROOM_MEDIA_AUDIO)
+					if(ps->type == JANUS_VIDEOROOM_MEDIA_AUDIO) {
 						json_object_set_new(m, "codec", json_string(janus_audiocodec_name(ps->acodec)));
-					else if(ps->type == JANUS_VIDEOROOM_MEDIA_VIDEO)
+					} else if(ps->type == JANUS_VIDEOROOM_MEDIA_VIDEO) {
 						json_object_set_new(m, "codec", json_string(janus_videocodec_name(ps->vcodec)));
+						if(ps->vcodec == JANUS_VIDEOCODEC_H264 && ps->h264_profile != NULL)
+							json_object_set_new(m, "h264-profile", json_string(ps->h264_profile));
+						if(ps->vcodec == JANUS_VIDEOCODEC_VP9 && ps->vp9_profile != NULL)
+							json_object_set_new(m, "vp9-profile", json_string(ps->vp9_profile));
+					}
 					if(ps->simulcast)
 						json_object_set_new(m, "simulcast", json_true());
 					if(ps->svc)
@@ -5124,8 +5138,8 @@ static json_t *janus_videoroom_process_synchronous_request(janus_videoroom_sessi
 					continue;
 				}
 				/* If we got here, it's RTP media, check the other properties too */
-				json_t *stream_pt = json_object_get(root, "pt");
-				json_t *stream_ssrc = json_object_get(root, "ssrc");
+				json_t *stream_pt = json_object_get(s, "pt");
+				json_t *stream_ssrc = json_object_get(s, "ssrc");
 				json_t *stream_rtcp_port = json_object_get(s, "rtcp_port");
 				if(ps->type == JANUS_VIDEOROOM_MEDIA_AUDIO) {
 					f = janus_videoroom_rtp_forwarder_add_helper(publisher, ps,
@@ -5152,7 +5166,7 @@ static json_t *janus_videoroom_process_synchronous_request(janus_videoroom_sessi
 						}
 					}
 				} else {
-					json_t *stream_simulcast = json_object_get(root, "simulcast");
+					json_t *stream_simulcast = json_object_get(s, "simulcast");
 					f = janus_videoroom_rtp_forwarder_add_helper(publisher, ps,
 						host, port, stream_rtcp_port ? json_integer_value(stream_rtcp_port) : -1,
 						json_integer_value(stream_pt), json_integer_value(stream_ssrc),
@@ -5180,8 +5194,8 @@ static json_t *janus_videoroom_process_synchronous_request(janus_videoroom_sessi
 						/* Check if there's simulcast substreams we need to relay */
 						stream_port = json_object_get(s, "port_2");
 						port = json_integer_value(stream_port);
-						stream_pt = json_object_get(root, "pt_2");
-						stream_ssrc = json_object_get(root, "ssrc_2");
+						stream_pt = json_object_get(s, "pt_2");
+						stream_ssrc = json_object_get(s, "ssrc_2");
 						if(json_integer_value(stream_port) > 0) {
 							f = janus_videoroom_rtp_forwarder_add_helper(publisher, ps,
 								host, port, 0, json_integer_value(stream_pt), json_integer_value(stream_ssrc),
@@ -5209,8 +5223,8 @@ static json_t *janus_videoroom_process_synchronous_request(janus_videoroom_sessi
 						}
 						stream_port = json_object_get(s, "port_3");
 						port = json_integer_value(stream_port);
-						stream_pt = json_object_get(root, "pt_3");
-						stream_ssrc = json_object_get(root, "ssrc_3");
+						stream_pt = json_object_get(s, "pt_3");
+						stream_ssrc = json_object_get(s, "ssrc_3");
 						if(json_integer_value(stream_port) > 0) {
 							f = janus_videoroom_rtp_forwarder_add_helper(publisher, ps,
 								host, port, 0, json_integer_value(stream_pt), json_integer_value(stream_ssrc),
@@ -9992,15 +10006,8 @@ static void *janus_videoroom_handler(void *data) {
 									}
 								}
 								if(ps->pt == -1 && janus_sdp_get_codec_pt(offer, m->index, janus_videocodec_name(ps->vcodec)) != -1) {
+									/* We'll only get the profile later, when we've generated an answer  */
 									ps->pt = janus_videocodec_pt(ps->vcodec);
-									/* Check if video profile has been set */
-									if((ps->vcodec == JANUS_VIDEOCODEC_H264 && ps->h264_profile == NULL) || (ps->vcodec == JANUS_VIDEOCODEC_VP9 && ps->vp9_profile == NULL)) {
-										const char* vfmtp = janus_sdp_get_fmtp(answer, m->index, janus_sdp_get_codec_pt(answer, m->index, janus_videocodec_name(ps->vcodec)));
-										if(ps->vcodec == JANUS_VIDEOCODEC_H264)
-											ps->h264_profile = g_strdup(vfmtp);
-										if(ps->vcodec == JANUS_VIDEOCODEC_VP9)
-											ps->vp9_profile = g_strdup(vfmtp);
-									}
 								}
 							} else {
 								/* Check the codec priorities in the room configuration */
@@ -10035,16 +10042,9 @@ static void *janus_videoroom_handler(void *data) {
 									}
 									/* Check if the codec is available */
 									if(janus_sdp_get_codec_pt(offer, m->index, janus_videocodec_name(videoroom->vcodec[i])) != -1) {
+										/* We'll only get the profile later, when we've generated an answer  */
 										ps->vcodec = videoroom->vcodec[i];
 										ps->pt = janus_videocodec_pt(ps->vcodec);
-										/* Check if video profile has been set */
-										if((ps->vcodec == JANUS_VIDEOCODEC_H264 && ps->h264_profile == NULL) || (ps->vcodec == JANUS_VIDEOCODEC_VP9 && ps->vp9_profile == NULL)) {
-											const char* vfmtp = janus_sdp_get_fmtp(answer, m->index, janus_sdp_get_codec_pt(answer, m->index, janus_videocodec_name(ps->vcodec)));
-											if(ps->vcodec == JANUS_VIDEOCODEC_H264)
-												ps->h264_profile = g_strdup(vfmtp);
-											if(ps->vcodec == JANUS_VIDEOCODEC_VP9)
-												ps->vp9_profile = g_strdup(vfmtp);
-										}
 										break;
 									}
 								}
@@ -10126,6 +10126,17 @@ static void *janus_videoroom_handler(void *data) {
 							/* TODO Remove, this is just here for backwards compatibility */
 							if(videocodec == NULL)
 								videocodec = janus_videocodec_name(ps->vcodec);
+							/* Check if video profile has been set */
+							if((ps->vcodec == JANUS_VIDEOCODEC_H264 && ps->h264_profile == NULL) || (ps->vcodec == JANUS_VIDEOCODEC_VP9 && ps->vp9_profile == NULL)) {
+								int video_pt = janus_sdp_get_codec_pt(answer, m->index, janus_videocodec_name(ps->vcodec));
+								const char *vfmtp = janus_sdp_get_fmtp(answer, m->index, video_pt);
+								if(vfmtp != NULL) {
+									if(ps->vcodec == JANUS_VIDEOCODEC_H264)
+										ps->h264_profile = janus_sdp_get_video_profile(ps->vcodec, vfmtp);
+									else if(ps->vcodec == JANUS_VIDEOCODEC_VP9)
+										ps->vp9_profile = janus_sdp_get_video_profile(ps->vcodec, vfmtp);
+								}
+							}
 							/* Also add a bandwidth SDP attribute if we're capping the bitrate in the room */
 							if(videoroom->bitrate > 0 && videoroom->bitrate_cap) {
 								if(participant->firefox) {
@@ -10298,7 +10309,7 @@ static void janus_videoroom_relay_rtp_packet(gpointer data, gpointer user_data) 
 		return;
 	janus_videoroom_publisher_stream *ps = stream->publisher_streams ?
 		stream->publisher_streams->data : NULL;
-	if(ps != packet->source)
+	if(ps != packet->source || ps == NULL)
 		return;
 	janus_videoroom_subscriber *subscriber = stream->subscriber;
 	janus_videoroom_session *session = subscriber->session;
@@ -10502,7 +10513,7 @@ static void janus_videoroom_relay_rtp_packet(gpointer data, gpointer user_data) 
 			/* If we got here, update the RTP header and send the packet */
 			janus_rtp_header_update(packet->data, &stream->context, TRUE, 0);
 			char vp8pd[6];
-			if(ps && ps->vcodec == JANUS_VIDEOCODEC_VP8) {
+			if(ps->vcodec == JANUS_VIDEOCODEC_VP8) {
 				/* For VP8, we save the original payload descriptor, to restore it after */
 				memcpy(vp8pd, payload, sizeof(vp8pd));
 				janus_vp8_simulcast_descriptor_update(payload, plen, &stream->vp8_context,
@@ -10517,7 +10528,7 @@ static void janus_videoroom_relay_rtp_packet(gpointer data, gpointer user_data) 
 			/* Restore the timestamp and sequence number to what the publisher set them to */
 			packet->data->timestamp = htonl(packet->timestamp);
 			packet->data->seq_number = htons(packet->seq_number);
-			if(ps && ps->vcodec == JANUS_VIDEOCODEC_VP8) {
+			if(ps->vcodec == JANUS_VIDEOCODEC_VP8) {
 				/* Restore the original payload descriptor as well, as it will be needed by the next viewer */
 				memcpy(payload, vp8pd, sizeof(vp8pd));
 			}
