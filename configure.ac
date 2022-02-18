@@ -31,7 +31,6 @@ CFLAGS="$CFLAGS \
 	-Wformat-security \
 	-Wformat=2 \
 	-Winit-self \
-	-Winline \
 	-Wlarger-than=65537 \
 	-Wmissing-declarations \
 	-Wmissing-format-attribute \
@@ -39,11 +38,6 @@ CFLAGS="$CFLAGS \
 	-Wmissing-noreturn \
 	-Wmissing-prototypes \
 	-Wnested-externs \
-	-Wno-aggregate-return \
-	-Wno-missing-field-initializers \
-	-Wno-redundant-decls \
-	-Wno-undef \
-	-Wno-unused-parameter \
 	-Wold-style-definition \
 	-Wpacked \
 	-Wpointer-arith \
@@ -51,6 +45,8 @@ CFLAGS="$CFLAGS \
 	-Wstrict-prototypes \
 	-Wswitch-default \
 	-Wunused \
+	-Wno-unused-parameter \
+	-Wno-unused-result \
 	-Wwrite-strings \
 	-Werror=implicit-function-declaration"
 
@@ -850,6 +846,19 @@ PKG_CHECK_MODULES([LUA],
 AC_SUBST([LUA_CFLAGS])
 AC_SUBST([LUA_LIBS])
 
+PKG_CHECK_MODULES([DUKTAPE],
+                  [duktape],
+                  [
+                    AS_IF([test "x$enable_plugin_duktape" = "xmaybe"],
+                          [enable_plugin_duktape=yes])
+                  ],
+                  [
+                    AS_IF([test "x$enable_plugin_duktape" = "xyes"],
+                          [AC_MSG_ERROR([duktape not found. See README.md for installation instructions or use --disable-plugin-duktape])])
+                  ])
+AC_SUBST([DUKTAPE_CFLAGS])
+AC_SUBST([DUKTAPE_LIBS])
+
 AM_CONDITIONAL([ENABLE_PLUGIN_AUDIOBRIDGE], [test "x$enable_plugin_audiobridge" = "xyes"])
 AM_CONDITIONAL([ENABLE_PLUGIN_DUKTAPE], [test "x$enable_plugin_duktape" = "xyes"])
 AM_CONDITIONAL([ENABLE_PLUGIN_ECHOTEST], [test "x$enable_plugin_echotest" = "xyes"])
@@ -982,6 +991,7 @@ AM_CONDITIONAL([ENABLE_PCAP2MJR], [test "x$enable_pcap2mjr" = "xyes"])
 
 AC_CONFIG_FILES([
   Makefile
+  src/Makefile
   html/Makefile
   docs/Makefile
 ])
