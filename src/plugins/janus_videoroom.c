@@ -2026,6 +2026,7 @@ typedef struct janus_videoroom_publisher {
 	int position_x;
 	int position_y;
 	int position_z;
+	gchar *avatar;
 } janus_videoroom_publisher;
 /* Each VideoRoom publisher can share multiple streams, so each stream is its own structure */
 typedef struct janus_videoroom_publisher_stream {
@@ -2294,6 +2295,7 @@ static void janus_videoroom_publisher_free(const janus_refcount *p_ref) {
 	g_free(p->room_id_str);
 	g_free(p->user_id_str);
 	g_free(p->display);
+	g_free(p->avatar);
 	g_free(p->recording_base);
 	/* Get rid of all the streams */
 	g_list_free_full(p->streams, (GDestroyNotify)(janus_videoroom_publisher_stream_destroy));
@@ -2940,6 +2942,9 @@ static json_t *janus_videoroom_subscriber_streams_summary(janus_videoroom_subscr
 				json_object_set_new(m, "feed_id", string_ids ? json_string(ps->publisher->user_id_str) : json_integer(ps->publisher->user_id));
 				if(ps->publisher->display)
 					json_object_set_new(m, "feed_display", json_string(ps->publisher->display));
+				if(ps->publisher->avatar)
+					json_object_set_new(m, "feed_avatar", json_string(ps->publisher->avatar));
+
 				/* If this is a legacy subscription, put the info in the generic part too */
 				if(legacy && event) {
 					json_object_set_new(event, "id", string_ids ? json_string(ps->publisher->user_id_str) : json_integer(ps->publisher->user_id));
@@ -3621,6 +3626,9 @@ static void janus_videoroom_notify_about_publisher(janus_videoroom_publisher *p,
 	json_object_set_new(pl, "id", string_ids ? json_string(p->user_id_str) : json_integer(p->user_id));
 	if(p->display)
 		json_object_set_new(pl, "display", json_string(p->display));
+	if(p->avatar)
+		json_object_set_new(pl, "avatar", json_string(p->avatar));
+
 	/* Add proper info on all the streams */
 	gboolean audio_added = FALSE, video_added = FALSE;
 	json_t *media = json_array();
@@ -3691,6 +3699,9 @@ static void janus_videoroom_notify_about_publisher(janus_videoroom_publisher *p,
 		json_object_set_new(info, "id", string_ids ? json_string(p->user_id_str) : json_integer(p->user_id));
 		if(p->display)
 				json_object_set_new(info, "display", json_string(p->display));
+		if(p->avatar)
+				json_object_set_new(info, "avatar", json_string(p->avatar));
+
 		json_t *media = json_array();
 		GList *temp = p->streams;
 		while(temp) {
@@ -3734,6 +3745,9 @@ static void janus_videoroom_participant_joining(janus_videoroom_publisher *p) {
 		json_object_set_new(user, "id", string_ids ? json_string(p->user_id_str) : json_integer(p->user_id));
 		if (p->display) {
 			json_object_set_new(user, "display", json_string(p->display));
+		}
+		if(p->avatar){
+			json_object_set_new(user, "avatar", json_string(p->avatar));
 		}
 		json_object_set_new(event, "videoroom", json_string("event"));
 		json_object_set_new(event, "room", string_ids ? json_string(p->room_id_str) : json_integer(p->room_id));
@@ -3877,6 +3891,8 @@ json_t *janus_videoroom_query_session(janus_plugin_session *handle) {
 				json_object_set_new(info, "private_id", json_integer(participant->pvt_id));
 				if(participant->display)
 					json_object_set_new(info, "display", json_string(participant->display));
+				if(participant->avatar)
+					json_object_set_new(info, "avatar", json_string(participant->avatar));
 				/* TODO Fix the summary of viewers, since everything is stream based now */
 				//~ if(participant->subscribers)
 					//~ json_object_set_new(info, "viewers", json_integer(g_slist_length(participant->subscribers)));
@@ -6129,6 +6145,8 @@ static json_t *janus_videoroom_process_synchronous_request(janus_videoroom_sessi
 			json_object_set_new(pl, "id", string_ids ? json_string(p->user_id_str) : json_integer(p->user_id));
 			if(p->display)
 				json_object_set_new(pl, "display", json_string(p->display));
+			if(p->avatar)
+				json_object_set_new(pl, "avatar", json_string(p->avatar));
 			json_object_set_new(pl, "publisher", g_atomic_int_get(&p->session->started) ? json_true() : json_false());
 			/* To see if the participant is talking, we need to find the audio stream(s) */
 			if(g_atomic_int_get(&p->session->started)) {
@@ -6210,7 +6228,9 @@ static json_t *janus_videoroom_process_synchronous_request(janus_videoroom_sessi
 			json_t *pl = json_object();
 			json_object_set_new(pl, "publisher_id", string_ids ? json_string(p->user_id_str) : json_integer(p->user_id));
 			if(p->display)
-				json_object_set_new(pl, "display", json_string(p->display));
+				json_object_set_new(pl, "display", json_string(p->display));			
+			if(p->avatar)
+				json_object_set_new(pl, "avatar", json_string(p->avatar));
 			json_t *flist = json_array();
 			/* Iterate on all media streams to see what's being forwarded */
 			janus_videoroom_publisher_stream *ps = NULL;
@@ -6965,26 +6985,32 @@ void janus_videoroom_incoming_data(janus_plugin_session *handle, janus_plugin_da
 		if (newState) {
 
 			json_t *position = json_object_get(newState, "position");
+			if(position){
+				json_t *position_x = json_array_get(position, 0);
+				int x = json_integer_value(position_x);
+				participant->position_x = x;
 
-			json_t *position_x = json_array_get(position, 0);
-			int x = json_integer_value(position_x);
-			participant->position_x = x;
+				json_t *position_y = json_array_get(position, 1);
+				int y = json_integer_value(position_y);
+				participant->position_y = y;
 
-			json_t *position_y = json_array_get(position, 1);
-			int y = json_integer_value(position_y);
-			participant->position_y = y;
+				json_t *position_z = json_array_get(position, 2);
+				int z = json_integer_value(position_z);
+				participant->position_z = z;
+				JANUS_LOG(LOG_INFO, "new position :[%d, %d, %d]\n", participant->position_x, participant->position_y, participant->position_z);
+			}
 
-			json_t *position_z = json_array_get(position, 2);
-			int z = json_integer_value(position_z);
-			participant->position_z = z;
-			JANUS_LOG(LOG_INFO, "new position :[%d, %d, %d]\n", participant->position_x, participant->position_y, participant->position_z);
+			json_t *avatar = json_object_get(newState, "avatar");
+			if(avatar){
+				const char *avatar_text = json_string_value(avatar);
+				participant->avatar = g_strdup(avatar_text);
+			}
+
 		}else{
 			JANUS_LOG(LOG_INFO,"This message is not from virtual space app.\n");
 			JANUS_LOG(LOG_INFO,"json error on line %d: %s\n", error.line, error.text);
 		}
 	}
-
-
 
 	/* Relay to all subscribers */
 	janus_videoroom_rtp_relay_packet pkt = { 0 };
@@ -7718,6 +7744,9 @@ static void *janus_videoroom_handler(void *data) {
 							json_object_set_new(al, "id", string_ids ? json_string(p->user_id_str) : json_integer(p->user_id));
 							if(p->display)
 								json_object_set_new(al, "display", json_string(p->display));
+							if(p->avatar)
+								json_object_set_new(al, "avatar", json_string(p->avatar));
+								
 							json_array_append_new(attendees, al);
 						}
 						continue;
@@ -7726,6 +7755,8 @@ static void *janus_videoroom_handler(void *data) {
 					json_object_set_new(pl, "id", string_ids ? json_string(p->user_id_str) : json_integer(p->user_id));
 					if(p->display)
 						json_object_set_new(pl, "display", json_string(p->display));
+					if(p->avatar)
+						json_object_set_new(pl, "avatar", json_string(p->avatar));
 					/* Add proper info on all the streams */
 					gboolean audio_added = FALSE, video_added = FALSE, talking_found = FALSE, talking = FALSE;
 					json_t *media = json_array();
@@ -10791,11 +10822,11 @@ static void janus_videoroom_relay_data_packet(gpointer data, gpointer user_data)
 	janus_videoroom_session *session = subscriber->session;
 
 	if(gateway != NULL && packet->data != NULL) {
-		JANUS_LOG(LOG_VERB, "Forwarding %s DataChannel message (%d bytes) to viewer\n",
-			packet->textdata ? "text" : "binary", packet->length);
+		JANUS_LOG(LOG_INFO, "Forwarding %s DataChannel message (%d bytes) to viewer %d \n",
+			packet->textdata ? "text" : "binary", packet->length, subscriber->pvt_id );
 		janus_plugin_data data = {
-			.label = ps->publisher->user_id_str,
-			// .label = packet->label,
+			//.label = ps->publisher->user_id_str,
+			.label = packet->label,
 			.protocol = NULL,
 			.binary = !packet->textdata,
 			.buffer = (char *)packet->data,
